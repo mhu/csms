@@ -1,11 +1,14 @@
 use chrono::Local;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use rust_ocpp::v2_0_1::messages::boot_notification::{
     BootNotificationRequest, BootNotificationResponse,
 };
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{Message, Utf8Bytes},
+};
 
 struct CallError {
     code: String,
@@ -49,51 +52,17 @@ async fn accept_connection(stream: TcpStream) {
                 match msg.to_text() {
                     Ok(msg_str) => match serde_json::from_str::<Value>(msg_str) {
                         Ok(request) => {
-                            let unique_id = request.get(1).unwrap().as_str().unwrap();
+                            let call_id = request.get(1).unwrap().as_str().unwrap();
                             let action = request.get(2).unwrap().as_str().unwrap();
 
                             match action {
                                 "BootNotification" => {
                                     match handle_boot_notification_request(&request) {
                                         Ok(response) => {
-                                            let json_string =
-                                                serde_json::to_value(&response).unwrap();
-                                            let response_array = json!([
-                                                3,
-                                                unique_id,
-                                                "BootNotificationResponse",
-                                                json_string
-                                            ])
-                                            .to_string();
-
-                                            println!(
-                                                "Sending response to {}: {}",
-                                                action, response_array
-                                            );
-
-                                            write
-                                                .send(Message::Text(Utf8Bytes::from(
-                                                    response_array,
-                                                )))
-                                                .await
-                                                .unwrap();
+                                            write_call_result(&mut write, call_id, response).await;
                                         }
                                         Err(e) => {
-                                            let response_array =
-                                                json!([4, unique_id, e.code, e.description])
-                                                    .to_string();
-
-                                            println!(
-                                                "Sending response to {}: {}",
-                                                action, response_array
-                                            );
-
-                                            write
-                                                .send(Message::Text(Utf8Bytes::from(
-                                                    response_array,
-                                                )))
-                                                .await
-                                                .unwrap();
+                                            write_call_error(&mut write, call_id, e).await;
                                         }
                                     }
                                 }
@@ -137,4 +106,32 @@ fn handle_boot_notification_request(
             description: String::from("Missing payload"),
         }),
     }
+}
+
+async fn write_call_result(
+    write: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    call_unique_id: &str,
+    payload: BootNotificationResponse, // TODO: Allow for more response payloads to be used
+) {
+    let response_type = String::from("BootNotificationResponse"); // TODO: Determine response type based on payload
+    let json_string = serde_json::to_value(&payload).unwrap();
+    let response_array = json!([3, call_unique_id, response_type, json_string]).to_string();
+
+    write
+        .send(Message::Text(Utf8Bytes::from(response_array)))
+        .await
+        .unwrap();
+}
+
+async fn write_call_error(
+    write: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    call_unique_id: &str,
+    error: CallError,
+) {
+    let response_array = json!([4, call_unique_id, error.code, error.description]).to_string();
+
+    write
+        .send(Message::Text(Utf8Bytes::from(response_array)))
+        .await
+        .unwrap();
 }
