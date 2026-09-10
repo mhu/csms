@@ -52,24 +52,40 @@ async fn accept_connection(stream: TcpStream) {
                 match msg.to_text() {
                     Ok(msg_str) => match serde_json::from_str::<Value>(msg_str) {
                         Ok(request) => {
-                            let call_id = request.get(1).unwrap().as_str().unwrap();
+                            let message_id = request.get(1).unwrap().as_str().unwrap();
                             let action = request.get(2).unwrap().as_str().unwrap();
 
                             match action {
                                 "BootNotification" => {
                                     match handle_boot_notification_request(&request) {
                                         Ok(response) => {
-                                            write_call_result(&mut write, call_id, response).await;
+                                            write_call_result(&mut write, message_id, response)
+                                                .await;
                                         }
                                         Err(e) => {
-                                            write_call_error(&mut write, call_id, e).await;
+                                            write_call_error(&mut write, message_id, e).await;
                                         }
                                     }
                                 }
-                                _ => println!("Received unknown request of type '{action}'"),
+                                _ => {
+                                    write_call_error(
+                                        &mut write,
+                                        message_id,
+                                        CallError {
+                                            code: String::from("NotImplemented"),
+                                            description: format!(
+                                                "Action '{action}' is not implemented"
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                                }
                             }
                         }
-                        Err(e) => println!("Failed to parse message '{msg_str}': {e}"),
+                        Err(e) => {
+                            // TODO: Can we send a `CallError` message here, since the message ID can not be parsed?
+                            println!("Failed to parse message '{msg_str}': {e}")
+                        }
                     },
                     Err(e) => {
                         println!("Failed to parse websocket message to string: {e}")
