@@ -10,8 +10,22 @@ use tokio_tungstenite::{
     tungstenite::{Message, Utf8Bytes},
 };
 
+enum CallErrorCode {
+    FormationViolation,
+    NotImplemented,
+}
+
+impl CallErrorCode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            CallErrorCode::FormationViolation => "FormationViolation",
+            CallErrorCode::NotImplemented => "NotImplemented",
+        }
+    }
+}
+
 struct CallError {
-    code: String,
+    code: CallErrorCode,
     description: String,
 }
 
@@ -72,7 +86,7 @@ async fn accept_connection(stream: TcpStream) {
                                         &mut write,
                                         message_id,
                                         CallError {
-                                            code: String::from("NotImplemented"),
+                                            code: CallErrorCode::NotImplemented,
                                             description: format!(
                                                 "Action '{action}' is not implemented"
                                             ),
@@ -111,14 +125,14 @@ fn handle_boot_notification_request(
                 }),
                 Err(e) => {
                     Err(CallError {
-                        code: String::from("FormationViolation"),
+                        code: CallErrorCode::FormationViolation,
                         description: String::from("Invalid payload format: ") + &e.to_string()
                     })
                 }
             }
         }
         None => Err(CallError {
-            code: String::from("FormationViolation"),
+            code: CallErrorCode::FormationViolation,
             description: String::from("Missing payload"),
         }),
     }
@@ -144,7 +158,8 @@ async fn write_call_error(
     call_unique_id: &str,
     error: CallError,
 ) {
-    let response_array = json!([4, call_unique_id, error.code, error.description]).to_string();
+    let response_array =
+        json!([4, call_unique_id, error.code.as_str(), error.description]).to_string();
 
     write
         .send(Message::Text(Utf8Bytes::from(response_array)))
