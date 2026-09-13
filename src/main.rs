@@ -7,7 +7,10 @@ use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
     WebSocketStream,
-    tungstenite::{Error, Message, Utf8Bytes},
+    tungstenite::{
+        Error, Message, Utf8Bytes,
+        handshake::server::{ErrorResponse, Request, Response},
+    },
 };
 
 struct Call {
@@ -55,7 +58,36 @@ async fn accept_connection(stream: TcpStream) {
 
     println!("Accepted connection from: {}", addr);
 
-    let ws_stream = tokio_tungstenite::accept_async(stream)
+    let process_headers_callback = |request: &Request, response: Response| {
+        let uri = request.uri().to_string();
+        let headers = request.headers();
+        let protocol_header = headers
+            .iter()
+            .find(|header| header.0.eq("sec-websocket-protocol"));
+
+        if !uri.starts_with("/ocpp/") {
+            Err(ErrorResponse::new(Some(String::from("Malformed URI"))))
+        } else if protocol_header.is_none() {
+            Err(ErrorResponse::new(Some(String::from(
+                "Missing header 'sec-websocket-protocol'",
+            ))))
+        } else if !protocol_header
+            .unwrap()
+            .1
+            .to_str()
+            .unwrap()
+            .to_owned()
+            .contains("ocpp2.0.1")
+        {
+            Err(ErrorResponse::new(Some(String::from(
+                "Server supports OCPP 2.0.1 only",
+            ))))
+        } else {
+            Ok(response)
+        }
+    };
+
+    let ws_stream = tokio_tungstenite::accept_hdr_async(stream, process_headers_callback)
         .await
         .expect("Error during the websocket handshake");
 
